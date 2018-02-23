@@ -1,0 +1,30 @@
+{
+  "name": "file-cache-proxy",
+  "version": "0.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wmzy/file-cache-proxy.git"
+  },
+  "keywords": [
+    "http",
+    "file",
+    "cache",
+    "proxy"
+  ],
+  "author": "wmzy",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/wmzy/file-cache-proxy/issues"
+  },
+  "homepage": "https://github.com/wmzy/file-cache-proxy#readme",
+  "dependencies": {
+    "http-proxy": "^1.16.2",
+    "lru-cache": "^4.1.1",
+    "mississippi": "^2.0.0"
+  }
+}
