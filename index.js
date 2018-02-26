@@ -1,74 +1,127 @@
+const util = require('util');
 const http = require('http');
 const httpProxy = require('http-proxy');
 const LRU = require('lru-cache');
 const FileCacheManager = require('./file-cache-manager');
 
-const target = 'http://localhost:9000';
-const bodyCache = new FileCacheManager();
-
-const resCache = new LRU({
-  max: 1000
-});
-
-const proxy = httpProxy.createProxyServer({target})
-
-// Listen for the `error` event on `proxy`.
-proxy.on('error', function (err, req, res) {
-  res.writeHead(500, {
-    'Content-Type': 'text/plain'
-  });
-
-  res.end('Something went wrong.');
-});
-
-proxy.on('proxyRes', function (proxyRes, req, res) {
-  proxyRes.on('pipe', () => {
-    proxyRes.unpipe(res);
-
-    // cache req
-    const key = getCacheKey(req);
-    const bodyKey = getBodyCacheKey(res);
-    const headers = getResHeaders(res);
-    resCache.set(key, {headers, bodyKey})
-
-    if (bodyCache.has(bodyKey)) {
-      proxyRes.abort();
-    } else {
-      // save to cache
-      const cacheWriteStream = bodyCache.getWriteStream(bodyKey);
-      proxyRes.pipe(cacheWriteStream);
-    }
-    bodyCache.createReadStream(bodyKey).pipe(res);
-
-    const resCollection = popResQueue(key)
-    resCollection.forEach(res => {
-      writeHeaders(res, headers);
-      bodyCache.createReadStream(bodyKey).pipe(res);
-    });
-  });
-});
-
-function cacheIt(req, res) {
-  const key = getCacheKey(req);
-  const r = resCache.get(key)
-  if (r && bodyCache.has(r.bodyKey)) {
-    // serve from cache
-    writeHeaders(r.headers, res);
-    bodyCache.createReadStream(r.bodyKey).pipe(res)
-    return;
-  }
-  if (isFetching(key)) {
-    pushToQueue(key, res)
-  } else {
-    setFetching(key)
-    proxy.web(req, res);
-  }
-}
+const debug = util.debuglog('FCP');
 
 class FileCacheProxy {
-  constructor({target} = {}) {
-    this.target = target;
+  constructor({
+    cacheMax = 1000,
+    ...proxyOption
+  } = {}) {
+    this.fetchQueue = {};
+    const bodyCache = this.bodyCache = new FileCacheManager();
+
+    const resCache = this.resCache = new LRU({
+      max: cacheMax
+    });
+
+    const proxy = this.proxy = httpProxy.createProxyServer(proxyOption)
+
+    // Listen for the `error` event on `proxy`.
+    proxy.on('error', function (err, req, res) {
+      debug('proxy on error:', err);
+      res.writeHead(500, {
+        'Content-Type': 'text/plain'
+      });
+
+      res.end('Something went wrong.');
+    });
+
+    proxy.on('proxyRes', (proxyRes, req, res) => {
+      debug('proxy on proxyRes');
+      res.once('pipe', () => {
+        debug('proxyRes on pipe');
+        proxyRes.unpipe(res);
+
+        // cache req
+        const key = this.getCacheKey(req);
+        const bodyKey = this.getBodyCacheKey(req, res);
+        const headers = res.getHeaders();
+        resCache.set(key, {
+          headers,
+          bodyKey
+        })
+
+        if (this.bodyCache.has(bodyKey)) {
+          debug('proxyRes abort due to the body in cache');
+          console.log(Object.keys(proxyRes), 'ttttttttttt')
+          proxyRes.destroy();
+        } else {
+          // save to cache
+          debug('proxyRes body save to cache');
+          const cacheWriteStream = bodyCache.getWriteStream(bodyKey);
+          proxyRes.pipe(cacheWriteStream);
+        }
+        debug('proxyRes serve body from cache');
+        bodyCache.createReadStream(bodyKey).pipe(res);
+
+        const resCollection = this.popResQueue(key);
+        debug('proxyRes serve body for queue req', resCollection.length);
+        resCollection.forEach(res => {
+          writeHeaders(res, headers);
+          bodyCache.createReadStream(bodyKey).pipe(res);
+        });
+      });
+    });
+  }
+
+  cache(req, res) {
+    const key = this.getCacheKey(req);
+    debug('[cache] req key:', key);
+    const r = this.resCache.get(key)
+    if (r && this.bodyCache.has(r.bodyKey)) {
+      debug('[cache] hit req', key);
+      // serve from cache
+      writeHeaders(r.headers, res);
+      this.bodyCache.createReadStream(r.bodyKey).pipe(res)
+      return;
+    }
+    if (this.isFetching(key)) {
+      debug('[cache] push to key', key);
+      this.pushToQueue(key, res)
+    } else {
+      this.setFetching(key)
+      debug('[cache] fetch by proxy', key);
+      this.proxy.web(req, res);
+    }
+  }
+
+  isFetching(key) {
+    return !!this.fetchQueue[key];
+  }
+
+  setFetching(key) {
+    debug('[setFetching] key:', key)
+    this.fetchQueue[key] = [];
+  }
+
+  pushToQueue(key, res) {
+    this.fetchQueue[key].push(res);
+  }
+
+  popResQueue(key) {
+    debug('[popResQueue] key:', key)
+    const q = this.fetchQueue[key];
+    this.fetchQueue[key] = undefined;
+    return q || [];
+  }
+
+  getCacheKey(req) {
+    return req.method + ':' + req.url;
+  }
+
+  getBodyCacheKey(req, res) {
+    return this.getCacheKey(req)
   }
 }
 
-module.exports = cacheIt;
+function writeHeaders(res, headers) {
+  for (let k in headers) {
+    res.setHeader(k, headers[key])
+  }
+}
+
+module.exports = FileCacheProxy;

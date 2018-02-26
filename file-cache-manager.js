@@ -1,3 +1,5 @@
+const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const miss = require('mississippi');
 const LRU = require('lru-cache');
