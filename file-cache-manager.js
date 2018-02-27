@@ -1,9 +1,11 @@
+const util = require('util');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const miss = require('mississippi');
 const LRU = require('lru-cache');
 
+const debug = util.debuglog('FCM');
 const File = require('./file');
 
 class FileCacheManager {
@@ -23,11 +25,12 @@ class FileCacheManager {
 
   getWriteStream(key) {
     if (this.fileCache.has(key)) throw new Error('file is writing');
-    const file = new File(path.join(this.filePath, key));
+    const file = new File(path.join(this.filePath, Buffer.from(key).toString('hex')));
     this.fileCache.set(key, file);
-    const writeStream = fs.createWriteStream(path.join(this.filePath, key));
-    writeStream.on('error', () => {
+    const writeStream = fs.createWriteStream(file.filename);
+    writeStream.on('error', e => {
       this.fileCache.del(key);
+      file.error = e;
       file.status = 'error';
       file.emit('change');
     });
@@ -49,8 +52,10 @@ class FileCacheManager {
       writeStream.once('drain', callback);
     }, function(callback) {
       writeStream.end(() => {
+        debug('write done');
         if (file.status === 'writing') file.status = 'done';
         callback();
+        file.emit('change');
       })
     });
   }
@@ -68,18 +73,22 @@ class FileCacheManager {
     }, function readFromFile(size, next) {
       if (file.status === 'error') {
         if (fd !== undefined) fs.close(fd);
-        return next(new Error('file error on writing'));
+        return next(new Error('file error on writing:' + file.error));
       }
       if (bytesRead >= file.size && file.status === 'done') {
+        debug('write done');
         return fs.close(fd, next)
       }
       if (bytesRead + size >= file.size && file.status !== 'done') {
+        debug('file is writing, wait change');
         return file.once('change', () => readFromFile(size, next))
       }
       if (fd !== undefined) return read(fd)
       fs.open(file.filename, 'r', (err, _fd) => {
+        debug('open file to read');
         if (err) return next(err);
         fd = _fd;
+        debug('file is open');
         return read(fd);
       })
 
@@ -91,6 +100,7 @@ class FileCacheManager {
             return next(err)
           }
           bytesRead += br;
+          debug('read size:', br);
           next(null, buffer)
         })
       }

@@ -47,7 +47,6 @@ class FileCacheProxy {
 
         if (this.bodyCache.has(bodyKey)) {
           debug('proxyRes abort due to the body in cache');
-          console.log(Object.keys(proxyRes), 'ttttttttttt')
           proxyRes.destroy();
         } else {
           // save to cache
@@ -56,13 +55,29 @@ class FileCacheProxy {
           proxyRes.pipe(cacheWriteStream);
         }
         debug('proxyRes serve body from cache');
-        bodyCache.createReadStream(bodyKey).pipe(res);
+        bodyCache.createReadStream(bodyKey)
+          .on('error', e => {
+            debug(e);
+            res.destroy(e);
+          })
+          .pipe(res)
+          .on('error', e => {
+            debug(e);
+          });
 
         const resCollection = this.popResQueue(key);
         debug('proxyRes serve body for queue req', resCollection.length);
         resCollection.forEach(res => {
           writeHeaders(res, headers);
-          bodyCache.createReadStream(bodyKey).pipe(res);
+          bodyCache.createReadStream(bodyKey)
+            .on('error', e => {
+              debug(e);
+              res.destroy(e);
+            })
+            .pipe(res)
+            .on('error', e => {
+              debug(e);
+            });
         });
       });
     });
@@ -75,7 +90,7 @@ class FileCacheProxy {
     if (r && this.bodyCache.has(r.bodyKey)) {
       debug('[cache] hit req', key);
       // serve from cache
-      writeHeaders(r.headers, res);
+      writeHeaders(res, r.headers);
       this.bodyCache.createReadStream(r.bodyKey).pipe(res)
       return;
     }
@@ -120,7 +135,7 @@ class FileCacheProxy {
 
 function writeHeaders(res, headers) {
   for (let k in headers) {
-    res.setHeader(k, headers[key])
+    res.setHeader(k, headers[k])
   }
 }
 
