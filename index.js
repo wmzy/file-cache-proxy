@@ -8,11 +8,15 @@ const debug = util.debuglog('FCP');
 
 class FileCacheProxy {
   constructor({
+    filePath,
     cacheMax = 1000,
     ...proxyOption
   } = {}) {
     this.fetchQueue = {};
-    const bodyCache = this.bodyCache = new FileCacheManager();
+    const bodyCache = this.bodyCache = new FileCacheManager({
+      filePath,
+      fileCount: cacheMax
+    });
 
     const resCache = this.resCache = new LRU({
       max: cacheMax
@@ -57,12 +61,12 @@ class FileCacheProxy {
         debug('proxyRes serve body from cache');
         bodyCache.createReadStream(bodyKey)
           .on('error', e => {
-            debug(e);
+            debug('read stream error:', e);
             res.destroy(e);
           })
           .pipe(res)
           .on('error', e => {
-            debug(e);
+            debug('res stream error:', e);
           });
 
         const resCollection = this.popResQueue(key);

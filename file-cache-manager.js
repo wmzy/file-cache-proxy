@@ -66,18 +66,23 @@ class FileCacheManager {
     if (file.status === 'done') return fs.createReadStream(file.filename);
     let fd;
     let bytesRead = 0;
+    let closeFD = function (cb) {
+      if (fd !== undefined) {
+        fs.close(fd, cb)
+        closeFD = function noop() {};
+      }
+    }
     return miss.from({
-      destroy(err) {
-        if (fd !== undefined) fs.close(fd);
+      destroy(err, cb) {
+        closeFD(cb)
       }
     }, function readFromFile(size, next) {
       if (file.status === 'error') {
-        if (fd !== undefined) fs.close(fd);
         return next(new Error('file error on writing:' + file.error));
       }
       if (bytesRead >= file.size && file.status === 'done') {
         debug('write done');
-        return fs.close(fd, next)
+        return closeFD(e => next(e, null));
       }
       if (bytesRead + size >= file.size && file.status !== 'done') {
         debug('file is writing, wait change');
@@ -96,7 +101,6 @@ class FileCacheManager {
         const length = Math.min(size, file.size - bytesRead);
         fs.read(fd, Buffer.alloc(length), 0, length, null, (err, br, buffer) => {
           if (err) {
-            fs.close(fd);
             return next(err)
           }
           bytesRead += br;
